@@ -1,0 +1,637 @@
+🚁 Drone Simulator — Complete Journey
+Unreal Engine 5.3/5.4 | C++ | PID Physics
+
+📁 STEP 1 — Create Project
+
+Open Unreal Engine 5.3/5.4
+Click Games → Blank
+Set language to C++
+Name project → Macdonald
+Click Create Project
+Visual Studio opens automatically
+
+
+📦 STEP 2 — Prepare Drone in Blender
+
+Separate drone into 5 objects:
+
+Drone_Body
+Rotor_FL (Front Left)
+Rotor_FR (Front Right)
+Rotor_BL (Back Left)
+Rotor_BR (Back Right)
+
+
+Set pivot points:
+
+Body → center of drone
+Each rotor → center of that rotor
+
+
+Export as FBX:
+
+File → Export → FBX
+✅ Apply Transformations
+✅ Forward = -Z, Up = Y
+❌ Do NOT combine meshes
+
+
+
+
+📥 STEP 3 — Import Drone Into Unreal
+
+Content Browser → create folder Content/Drone
+Drag .fbx file into that folder
+FBX Import Options — set exactly:
+
+SettingValueSkeletal Mesh❌ OFFImport Mesh✅ ONImport Materials✅ ONImport Textures✅ ONCombine Meshes❌ OFF ← Critical!Generate Lightmap UVs✅ ON
+
+Click Import All
+You should see separate meshes:
+
+drone_fab_fbx_v1_DRONE_BODY
+drone_fab_fbx_v1_ROTOR_12
+drone_fab_fbx_v1_ROTOR_21
+drone_fab_fbx_v1_ROTOR_33
+drone_fab_fbx_v1_ROTOR_44
+
+📂 STEP 4 — Create C++ Classes
+Tools → New C++ Class:
+Parent ClassNamePawnDronePawnNonePIDControllerGame Mode BaseDroneGameModeHUDDroneHUD
+
+💻 STEP 5 — Write All C++ Code
+📄 PIDController.h
+cpp#pragma once
+#include "CoreMinimal.h"
+
+struct FPIDController
+{
+    float Kp, Ki, Kd;
+    float Integral;
+    float PreviousError;
+
+    FPIDController(float InKp = 1.f, float InKi = 0.f, float InKd = 0.f)
+        : Kp(InKp), Ki(InKi), Kd(InKd),
+          Integral(0.f), PreviousError(0.f) {}
+
+    float Update(float Error, float DeltaTime)
+    {
+        Integral      += Error * DeltaTime;
+        float Deriv    = (Error - PreviousError) / FMath::Max(DeltaTime, 0.0001f);
+        PreviousError  = Error;
+        return Kp * Error + Ki * Integral + Kd * Deriv;
+    }
+
+    void Reset()
+    {
+        Integral      = 0.f;
+        PreviousError = 0.f;
+    }
+};
+📄 DronePawn.h
+cpp#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Pawn.h"
+#include "PIDController.h"
+#include "DronePawn.generated.h"
+
+UCLASS()
+class MACDONALD_API ADronePawn : public APawn
+{
+    GENERATED_BODY()
+
+public:
+    ADronePawn();
+
+protected:
+    virtual void BeginPlay() override;
+    virtual void Tick(float DeltaTime) override;
+    virtual void SetupPlayerInputComponent(
+        class UInputComponent* PlayerInputComponent) override;
+
+    UPROPERTY(VisibleAnywhere) UStaticMeshComponent*      DroneMesh;
+    UPROPERTY(VisibleAnywhere) UStaticMeshComponent*      Rotor_FL;
+    UPROPERTY(VisibleAnywhere) UStaticMeshComponent*      Rotor_FR;
+    UPROPERTY(VisibleAnywhere) UStaticMeshComponent*      Rotor_BL;
+    UPROPERTY(VisibleAnywhere) UStaticMeshComponent*      Rotor_BR;
+    UPROPERTY(VisibleAnywhere) class USpringArmComponent* SpringArm;
+    UPROPERTY(VisibleAnywhere) class UCameraComponent*    Camera;
+    UPROPERTY(VisibleAnywhere) class UCameraComponent*    FPVCamera;
+
+    UPROPERTY(EditAnywhere, Category="Drone|Physics")
+    float Mass = 1.0f;
+
+    UPROPERTY(EditAnywhere, Category="Drone|Physics")
+    float MaxThrust = 2000.f;
+
+    UPROPERTY(EditAnywhere, Category="Drone|Physics")
+    float MaxTiltAngle = 35.f;
+
+    UPROPERTY(EditAnywhere, Category="Drone|PID")
+    float Altitude_Kp = 2.f, Altitude_Ki = 0.0f, Altitude_Kd = 0.5f;
+
+    UPROPERTY(EditAnywhere, Category="Drone|PID")
+    float Pitch_Kp = 6.f, Pitch_Ki = 0.05f, Pitch_Kd = 3.f;
+
+    UPROPERTY(EditAnywhere, Category="Drone|PID")
+    float Roll_Kp = 6.f, Roll_Ki = 0.05f, Roll_Kd = 3.f;
+
+    UPROPERTY(EditAnywhere, Category="Drone|Rotors")
+    float RotorSpinSpeed = 2000.f;
+
+    UPROPERTY(EditAnywhere, Category="Drone|Battery")
+    float MaxBattery = 100.f;
+
+    UPROPERTY(EditAnywhere, Category="Drone|Battery")
+    float BatteryDrainRate = 5.f;
+
+    UPROPERTY(EditAnywhere, Category="Drone|Battery")
+    float BatteryRechargeRate = 20.f;
+
+    UPROPERTY(EditAnywhere, Category="Drone|Wind")
+    float WindStrength = 50.f;
+
+    UPROPERTY(EditAnywhere, Category="Drone|Wind")
+    float WindChangeInterval = 3.f;
+
+public:
+    UFUNCTION(BlueprintCallable) float   GetSpeed()         const;
+    UFUNCTION(BlueprintCallable) float   GetAltitude()      const;
+    UFUNCTION(BlueprintCallable) float   GetBattery()       const;
+    UFUNCTION(BlueprintCallable) bool    IsCrashed()        const;
+    UFUNCTION(BlueprintCallable) FVector GetWindDirection() const;
+
+private:
+    FPIDController PID_Altitude;
+    FPIDController PID_Pitch;
+    FPIDController PID_Roll;
+
+    float InputThrottle = 0.f;
+    float InputPitch    = 0.f;
+    float InputRoll     = 0.f;
+    float InputYaw      = 0.f;
+
+    FVector Velocity         = FVector::ZeroVector;
+    FVector PreviousVelocity = FVector::ZeroVector;
+    float   CurrentYaw       = 0.f;
+    float   RotorAngle       = 0.f;
+
+    float CurrentBattery = 100.f;
+    bool  bIsDead        = false;
+
+    FVector CurrentWind = FVector::ZeroVector;
+    float   WindTimer   = 0.f;
+
+    bool bCrashed = false;
+    bool bIsFPV   = false;
+
+    void OnThrottleUp(float Val);
+    void OnPitch     (float Val);
+    void OnRoll      (float Val);
+    void OnYaw       (float Val);
+
+    void ApplyDronePhysics(float DeltaTime);
+    void SpinRotors        (float DeltaTime);
+    void UpdateWind        (float DeltaTime);
+    void CheckCrash        ();
+    void Recharge          ();
+    void ResetDrone        ();
+    void ToggleFPV         ();
+};
+📄 DronePawn.cpp
+cpp#include "DronePawn.h"
+#include "GameFramework/SpringArmComponent.h"
+#include "Camera/CameraComponent.h"
+#include "Components/InputComponent.h"
+#include "Math/UnrealMathUtility.h"
+
+ADronePawn::ADronePawn()
+{
+    PrimaryActorTick.bCanEverTick = true;
+
+    DroneMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DroneMesh"));
+    RootComponent = DroneMesh;
+    DroneMesh->SetSimulatePhysics(false);
+    DroneMesh->SetRelativeRotation(FRotator(0, -90, 0));
+
+    auto MakeRotor = [&](const FName& Name, FVector Offset) -> UStaticMeshComponent*
+    {
+        auto* R = CreateDefaultSubobject<UStaticMeshComponent>(Name);
+        R->SetupAttachment(DroneMesh);
+        R->SetRelativeLocation(Offset);
+        R->SetRelativeRotation(FRotator(0, 0, 90));
+        return R;
+    };
+
+    Rotor_FL = MakeRotor(TEXT("Rotor_FL"), FVector(  8,  24, 26));
+    Rotor_FR = MakeRotor(TEXT("Rotor_FR"), FVector(  8, -24, 26));
+    Rotor_BL = MakeRotor(TEXT("Rotor_BL"), FVector(-10,   7, 24));
+    Rotor_BR = MakeRotor(TEXT("Rotor_BR"), FVector(-10,  -7, 24));
+
+    SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
+    SpringArm->SetupAttachment(DroneMesh);
+    SpringArm->TargetArmLength         = 200.f;
+    SpringArm->SetRelativeLocation(FVector(0, 0, 0));
+    SpringArm->SetRelativeRotation(FRotator(-20, 0, 0));
+    SpringArm->bUsePawnControlRotation = false;
+    SpringArm->bInheritYaw             = true;
+    SpringArm->bInheritPitch           = false;
+    SpringArm->bInheritRoll            = false;
+
+    Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
+    Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
+    Camera->SetActive(true);
+
+    FPVCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FPVCamera"));
+    FPVCamera->SetupAttachment(DroneMesh);
+    FPVCamera->SetRelativeLocation(FVector(15, 0, 5));
+    FPVCamera->SetRelativeRotation(FRotator(0, 90, 0));
+    FPVCamera->SetActive(false);
+
+    PID_Altitude = FPIDController(Altitude_Kp, Altitude_Ki, Altitude_Kd);
+    PID_Pitch    = FPIDController(Pitch_Kp,    Pitch_Ki,    Pitch_Kd);
+    PID_Roll     = FPIDController(Roll_Kp,     Roll_Ki,     Roll_Kd);
+}
+
+void ADronePawn::BeginPlay()
+{
+    Super::BeginPlay();
+    CurrentBattery = MaxBattery;
+    CurrentWind    = FVector::ZeroVector;
+}
+
+void ADronePawn::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+    if (!bCrashed)
+    {
+        UpdateWind(DeltaTime);
+        ApplyDronePhysics(DeltaTime);
+        SpinRotors(DeltaTime);
+        CheckCrash();
+    }
+}
+
+void ADronePawn::ApplyDronePhysics(float DeltaTime)
+{
+    const float Gravity = -980.f;
+
+    if (bIsDead)
+    {
+        Velocity += FVector(0, 0, Gravity) * DeltaTime;
+        FVector NewPos = GetActorLocation() + Velocity * DeltaTime;
+        if (NewPos.Z < 0.f)
+        {
+            NewPos.Z = 0.f;
+            Velocity = FVector::ZeroVector;
+        }
+        SetActorLocation(NewPos);
+        return;
+    }
+
+    if (InputThrottle > 0.f)
+    {
+        CurrentBattery -= BatteryDrainRate * InputThrottle * DeltaTime;
+        CurrentBattery  = FMath::Clamp(CurrentBattery, 0.f, MaxBattery);
+    }
+
+    if (CurrentBattery <= 0.f) { bIsDead = true; return; }
+
+    float BatteryFactor = CurrentBattery / MaxBattery;
+    float Thrust = FMath::Clamp(
+        InputThrottle * MaxThrust * BatteryFactor,
+        0.f, MaxThrust);
+
+    float TargetPitch = -InputPitch * MaxTiltAngle;
+    float TargetRoll  =  InputRoll  * MaxTiltAngle;
+    CurrentYaw       +=  InputYaw   * 90.f * DeltaTime;
+
+    SetActorRotation(FRotator(TargetPitch, CurrentYaw, TargetRoll));
+
+    FVector Up      = GetActorUpVector();
+    FVector Forward = GetActorForwardVector();
+    FVector Right   = GetActorRightVector();
+
+    FVector Accel = Up      * (Thrust / Mass)
+                  + FVector(0, 0, Gravity)
+                  + Forward * (-InputPitch * 300.f)
+                  + Right   * ( InputRoll  * 300.f)
+                  + CurrentWind;
+
+    PreviousVelocity = Velocity;
+    Velocity        += Accel * DeltaTime;
+    Velocity        *= FMath::Clamp(1.f - 0.8f * DeltaTime, 0.f, 1.f);
+
+    FVector NewPos = GetActorLocation() + Velocity * DeltaTime;
+    if (NewPos.Z < 0.f) { NewPos.Z = 0.f; Velocity.Z = 0.f; }
+    SetActorLocation(NewPos);
+}
+
+void ADronePawn::SpinRotors(float DeltaTime)
+{
+    float BatteryFactor = CurrentBattery / MaxBattery;
+    float Speed = RotorSpinSpeed
+                * (0.3f + FMath::Abs(InputThrottle) * 0.7f)
+                * BatteryFactor;
+
+    RotorAngle = FMath::Fmod(RotorAngle + Speed * DeltaTime, 360.f);
+
+    FRotator CW (0,  RotorAngle, 0);
+    FRotator CCW(0, -RotorAngle, 0);
+
+    Rotor_FL->SetRelativeRotation(CCW);
+    Rotor_FR->SetRelativeRotation(CW);
+    Rotor_BL->SetRelativeRotation(CW);
+    Rotor_BR->SetRelativeRotation(CCW);
+}
+
+void ADronePawn::UpdateWind(float DeltaTime)
+{
+    WindTimer += DeltaTime;
+    if (WindTimer >= WindChangeInterval)
+    {
+        WindTimer   = 0.f;
+        CurrentWind = FVector(
+            FMath::RandRange(-WindStrength,        WindStrength),
+            FMath::RandRange(-WindStrength,        WindStrength),
+            FMath::RandRange(-WindStrength * 0.2f, WindStrength * 0.2f)
+        );
+    }
+}
+
+void ADronePawn::CheckCrash()
+{
+    float ImpactForce = (Velocity - PreviousVelocity).Size();
+    if (ImpactForce > 800.f && GetActorLocation().Z < 5.f)
+    {
+        bCrashed = true;
+        Velocity = FVector::ZeroVector;
+    }
+}
+
+void ADronePawn::Recharge()
+{
+    if (bCrashed) return;
+    CurrentBattery = FMath::Clamp(
+        CurrentBattery + BatteryRechargeRate,
+        0.f, MaxBattery);
+    bIsDead = false;
+}
+
+void ADronePawn::ResetDrone()
+{
+    bCrashed       = false;
+    bIsDead        = false;
+    CurrentBattery = MaxBattery;
+    Velocity       = FVector::ZeroVector;
+    SetActorLocation(FVector(0, 0, 100));
+    SetActorRotation(FRotator::ZeroRotator);
+    CurrentYaw     = 0.f;
+}
+
+void ADronePawn::ToggleFPV()
+{
+    bIsFPV = !bIsFPV;
+    FPVCamera->SetActive(bIsFPV);
+    Camera->SetActive(!bIsFPV);
+}
+
+void ADronePawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+{
+    Super::SetupPlayerInputComponent(PlayerInputComponent);
+
+    PlayerInputComponent->BindAxis("Throttle", this, &ADronePawn::OnThrottleUp);
+    PlayerInputComponent->BindAxis("Pitch",    this, &ADronePawn::OnPitch);
+    PlayerInputComponent->BindAxis("Roll",     this, &ADronePawn::OnRoll);
+    PlayerInputComponent->BindAxis("Yaw",      this, &ADronePawn::OnYaw);
+
+    PlayerInputComponent->BindAction("Recharge",   IE_Pressed, this, &ADronePawn::Recharge);
+    PlayerInputComponent->BindAction("ResetDrone", IE_Pressed, this, &ADronePawn::ResetDrone);
+    PlayerInputComponent->BindAction("ToggleFPV",  IE_Pressed, this, &ADronePawn::ToggleFPV);
+}
+
+void ADronePawn::OnThrottleUp(float Val) { InputThrottle = Val; }
+void ADronePawn::OnPitch     (float Val) { InputPitch    = Val; }
+void ADronePawn::OnRoll      (float Val) { InputRoll     = Val; }
+void ADronePawn::OnYaw       (float Val) { InputYaw      = Val; }
+
+float   ADronePawn::GetSpeed()         const { return Velocity.Size(); }
+float   ADronePawn::GetAltitude()      const { return GetActorLocation().Z; }
+float   ADronePawn::GetBattery()       const { return CurrentBattery; }
+bool    ADronePawn::IsCrashed()        const { return bCrashed; }
+FVector ADronePawn::GetWindDirection() const { return CurrentWind; }
+📄 DroneHUD.h
+cpp#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/HUD.h"
+#include "DroneHUD.generated.h"
+
+UCLASS()
+class MACDONALD_API ADroneHUD : public AHUD
+{
+    GENERATED_BODY()
+
+public:
+    virtual void DrawHUD() override;
+
+private:
+    void DrawText(
+        const FString& Text,
+        float X, float Y,
+        FLinearColor Color);
+};
+📄 DroneHUD.cpp
+cpp#include "DroneHUD.h"
+#include "DronePawn.h"
+#include "Engine/Canvas.h"
+#include "Engine/Engine.h"
+#include "GameFramework/PlayerController.h"
+#include "CanvasItem.h"
+
+void ADroneHUD::DrawHUD()
+{
+    Super::DrawHUD();
+
+    APlayerController* PC = GetOwningPlayerController();
+    if (!PC) return;
+
+    ADronePawn* Drone = Cast<ADronePawn>(PC->GetPawn());
+    if (!Drone) return;
+
+    float   Battery  = Drone->GetBattery();
+    float   Speed    = Drone->GetSpeed();
+    float   Altitude = Drone->GetAltitude();
+    FVector Wind     = Drone->GetWindDirection();
+    bool    Crashed  = Drone->IsCrashed();
+
+    DrawRect(FLinearColor::Black, 15, 15, 254, 34);
+
+    FLinearColor BarColor;
+    if      (Battery > 60.f) BarColor = FLinearColor::Green;
+    else if (Battery > 30.f) BarColor = FLinearColor::Yellow;
+    else                     BarColor = FLinearColor::Red;
+
+    float BarWidth = (Battery / 100.f) * 250.f;
+    DrawRect(BarColor, 17, 17, BarWidth, 30);
+
+    FLinearColor White = FLinearColor::White;
+    FLinearColor Red   = FLinearColor::Red;
+    FLinearColor Cyan  = FLinearColor(0.f, 1.f, 1.f, 1.f);
+    FLinearColor Gray  = FLinearColor(0.5f, 0.5f, 0.5f, 1.f);
+
+    DrawText(FString::Printf(TEXT("Battery: %.0f%%"), Battery),
+             20, 55, Battery > 30.f ? White : Red);
+    DrawText(FString::Printf(TEXT("Speed: %.0f cm/s"), Speed),
+             20, 80, White);
+    DrawText(FString::Printf(TEXT("Altitude: %.0f cm"), Altitude),
+             20, 105, White);
+    DrawText(FString::Printf(TEXT("Wind: X=%.0f Y=%.0f"), Wind.X, Wind.Y),
+             20, 130, Cyan);
+    DrawText(TEXT("C=FPV | R=Recharge | T=Reset"),
+             20, 155, Gray);
+
+    if (Crashed && Canvas)
+    {
+        DrawText(TEXT("DRONE CRASHED! Press T to Reset!"),
+                 Canvas->SizeX / 2.f - 200.f,
+                 Canvas->SizeY / 2.f, Red);
+    }
+
+    if (Battery < 20.f && !Crashed && Canvas)
+    {
+        DrawText(TEXT("LOW BATTERY! Press R!"),
+                 Canvas->SizeX / 2.f - 150.f,
+                 60.f, Red);
+    }
+}
+
+void ADroneHUD::DrawText(
+    const FString& Text, float X, float Y, FLinearColor Color)
+{
+    if (!Canvas || !GEngine) return;
+
+    FCanvasTextItem TextItem(
+        FVector2D(X, Y),
+        FText::FromString(Text),
+        GEngine->GetMediumFont(),
+        Color
+    );
+    TextItem.Scale = FVector2D(1.5f, 1.5f);
+    Canvas->DrawItem(TextItem);
+}
+📄 DroneGameMode.h
+cpp#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/GameModeBase.h"
+#include "DroneGameMode.generated.h"
+
+UCLASS()
+class MACDONALD_API ADroneGameMode : public AGameModeBase
+{
+    GENERATED_BODY()
+public:
+    ADroneGameMode();
+};
+📄 DroneGameMode.cpp
+cpp#include "DroneGameMode.h"
+#include "DronePawn.h"
+#include "DroneHUD.h"
+
+ADroneGameMode::ADroneGameMode()
+{
+    DefaultPawnClass = ADronePawn::StaticClass();
+    HUDClass         = ADroneHUD::StaticClass();
+}
+
+🔨 STEP 6 — Compile
+Press Ctrl+Shift+B in Visual Studio
+Build: 1 succeeded, 0 failed ✅
+
+🏗️ STEP 7 — Create BP_Drone Blueprint
+
+Content Browser → right-click → Blueprint Class
+Search DronePawn → select → name BP_Drone
+Open BP_Drone → assign meshes:
+
+ComponentMeshDroneMeshdrone_fab_fbx_v1_DRONE_BODYRotor_FLdrone_fab_fbx_v1_ROTOR_12Rotor_FRdrone_fab_fbx_v1_ROTOR_21Rotor_BLdrone_fab_fbx_v1_ROTOR_33Rotor_BRdrone_fab_fbx_v1_ROTOR_44
+
+Set each rotor Scale = 0.5, 0.5, 0.5
+Set each rotor Rotation Z = 90
+Drag rotors to correct arm positions visually
+Set Auto Possess Player = Player 0
+Click Compile + Save
+
+
+🎮 STEP 8 — Input Mappings
+Edit → Project Settings → Input:
+Axis Mappings:
+AxisKeyScaleThrottleW+1.0ThrottleS-1.0PitchUp Arrow+1.0PitchDown Arrow-1.0RollRight Arrow+1.0RollLeft Arrow-1.0YawE+1.0YawQ-1.0
+Action Mappings:
+ActionKeyToggleFPVCRechargeRResetDroneT
+
+⚙️ STEP 9 — Project Settings
+Edit → Project Settings → Maps & Modes:
+Default GameMode → DroneGameMode
+
+🌍 STEP 10 — Place Drone & Play
+
+File → Save Current Level As → DroneLevel
+Drag BP_Drone from Content Browser into viewport
+Set drone Z position = 100
+Press Play ▶️
+
+
+🎮 FINAL Controls
+KeyActionWThrottle Up ↑SThrottle Down ↓↑ ↓Pitch Forward/Back← →Roll Left/RightQ / EYaw Left/RightCToggle FPV CameraRRecharge BatteryTReset Crashed Drone
+
+📊 HUD Display
+┌─────────────────────────────────┐
+│ [████████░░] Battery Bar        │
+│ Battery: 80%                    │
+│ Speed: 245 cm/s                 │
+│ Altitude: 350 cm                │
+│ Wind: X=30 Y=-20                │
+│ C=FPV | R=Recharge | T=Reset    │
+│                                 │
+│   DRONE CRASHED! Press T!       │
+│   LOW BATTERY! Press R!         │
+└─────────────────────────────────┘
+
+⚠️ Important Notes
+API Macro Rule:
+Project Name → ALL CAPS → Add _API
+Macdonald    → MACDONALD_API
+If Using Different Project Name:
+Change in 3 files:
+cpp// DronePawn.h
+class YOURPROJECT_API ADronePawn
+
+// DroneGameMode.h
+class YOURPROJECT_API ADroneGameMode
+
+// DroneHUD.h
+class YOURPROJECT_API ADroneHUD
+Rotor Positions:
+cpp// Change these to match YOUR drone arm length
+Rotor_FL = FVector(  8,  24, 26)
+Rotor_FR = FVector(  8, -24, 26)
+Rotor_BL = FVector(-10,   7, 24)
+Rotor_BR = FVector(-10,  -7, 24)
+
+✅ Final Checklist
+
+ Project created as C++ named Macdonald
+ Drone FBX imported with Combine Meshes OFF
+ All 7 C++ files written correctly
+ Build succeeded ✅
+ BP_Drone created with meshes assigned
+ Rotors positioned on arm tips
+ Rotors Scale=0.5, Rotation Z=90
+ Auto Possess Player = Player 0
+ All input mappings added
+ DroneGameMode set in Project Settings
+ Drone placed in level at Z=100
+ FLYING WITH HUD! 🚁🎉
